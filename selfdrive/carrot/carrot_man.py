@@ -24,6 +24,130 @@ from common.filter_simple import StreamingMovingAverage
 
 NetworkType = log.DeviceState.NetworkType
 
+################ CarrotNavi
+# Haversine formula to calculate distance between two GPS coordinates
+def haversine(lon1, lat1, lon2, lat2):
+    R = 6371000  # Radius of Earth in meters
+    phi1, phi2 = math.radians(lat1), math.radians(lat2)
+    dphi = math.radians(lat2 - lat1)
+    dlambda = math.radians(lon2 - lon1)
+
+    a = math.sin(dphi / 2) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(dlambda / 2) ** 2
+    return 2 * R * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+
+# Get the closest point on a segment between two coordinates
+def closest_point_on_segment(p1, p2, current_position):
+    x1, y1 = p1
+    x2, y2 = p2
+    px, py = current_position
+
+    dx = x2 - x1
+    dy = y2 - y1
+    if dx == 0 and dy == 0:
+        return p1  # p1 and p2 are the same point
+
+    # Parameter t is the projection factor onto the line segment
+    t = ((px - x1) * dx + (py - y1) * dy) / (dx * dx + dy * dy)
+    t = max(0, min(1, t))  # Clamp t to the segment
+
+    closest_x = x1 + t * dx
+    closest_y = y1 + t * dy
+
+    return (closest_x, closest_y)
+
+# Get path after a certain distance from the current position
+# Including interpolated point at the exact distance_m location
+def get_path_after_distance(coordinates, current_position, distance_m):
+    total_distance = 0
+    path_after_distance = []
+
+    # Find the closest point on the path to the current position using segment projection
+    closest_index = -1
+    closest_point = None
+    min_distance = float('inf')
+
+    for i in range(len(coordinates) - 1):
+        p1 = coordinates[i]
+        p2 = coordinates[i + 1]
+        candidate_point = closest_point_on_segment(p1, p2, current_position)
+        distance = haversine(current_position[0], current_position[1], candidate_point[0], candidate_point[1])
+        if distance < min_distance:
+            min_distance = distance
+            closest_point = candidate_point
+            closest_index = i + 1
+
+    # Start from the closest point and calculate the path after the specified distance
+    if closest_index != -1:
+        # Always start with the closest point
+        total_distance = haversine(closest_point[0], closest_point[1], coordinates[closest_index][0], coordinates[closest_index][1])
+        path_after_distance.append(closest_point)
+        path_after_distance.append(coordinates[closest_index])
+
+        # Traverse the path and add points until the total distance exceeds distance_m
+        for i in range(closest_index + 1, len(coordinates)):
+            coord1 = coordinates[i - 1]
+            coord2 = coordinates[i]
+            segment_distance = haversine(coord1[0], coord1[1], coord2[0], coord2[1])
+
+            if total_distance + segment_distance >= distance_m:
+                # Interpolate to find the exact point at distance_m
+                remaining_distance = distance_m - total_distance
+                ratio = remaining_distance / segment_distance
+                interpolated_lon = coord1[0] + ratio * (coord2[0] - coord1[0])
+                interpolated_lat = coord1[1] + ratio * (coord2[1] - coord1[1])
+                path_after_distance.append((interpolated_lon, interpolated_lat))
+                break
+
+            total_distance += segment_distance
+            path_after_distance.append(coord2)
+
+    return path_after_distance
+
+# Convert GPS coordinates to relative x, y coordinates based on a reference point and heading
+def gps_to_relative_xy(gps_path, reference_point, heading_deg):
+    ref_lon, ref_lat = reference_point
+    relative_coordinates = []
+
+    # Convert heading from degrees to radians
+    heading_rad = math.radians(heading_deg)
+
+    for lon, lat in gps_path:
+        # Convert lat/lon differences to meters (assuming small distances for simple approximation)
+        x = (lon - ref_lon) * 40008000 * math.cos(math.radians(ref_lat)) / 360
+        y = (lat - ref_lat) * 40008000 / 360
+
+        # Rotate coordinates based on the heading angle to align with the car's direction
+        x_rot = x * math.cos(heading_rad) - y * math.sin(heading_rad)
+        y_rot = x * math.sin(heading_rad) + y * math.cos(heading_rad)
+
+        relative_coordinates.append((x_rot, y_rot))
+
+    return relative_coordinates
+
+# Calculate curvature given three points using a faster vector-based method
+def calculate_curvature(p1, p2, p3):
+    # Calculate vectors
+    v1 = (p2[0] - p1[0], p2[1] - p1[1])
+    v2 = (p3[0] - p2[0], p3[1] - p2[1])
+
+    # Calculate cross product (magnitude of the z-component for 2D vectors)
+    cross_product = v1[0] * v2[1] - v1[1] * v2[0]
+
+    # Calculate the lengths of the vectors
+    len_v1 = math.sqrt(v1[0]**2 + v1[1]**2)
+    len_v2 = math.sqrt(v2[0]**2 + v2[1]**2)
+
+    # Calculate the curvature as the sine of the angle between v1 and v2 divided by the product of their lengths
+    if len_v1 * len_v2 == 0:
+        return 0
+
+    curvature = cross_product / (len_v1 * len_v2 * len_v1)
+
+    return curvature
+
+################ CarrotNavi End..  
+
+
 class CarrotMan:
   def __init__(self):
     self.params = Params()
@@ -54,8 +178,14 @@ class CarrotMan:
     self.carrot_panda_debug_thread.daemon = True
     self.carrot_panda_debug_thread.start()
 
+    self.carrot_route_thread = threading.Thread(target=self.carrot_route, args=[])
+    self.carrot_route_thread.daemon = True
+    self.carrot_route_thread.start()
+
     self.is_running = True
     threading.Thread(target=self.broadcast_version_info).start()
+
+    self.navi_points = []
 
 
   def get_broadcast_address(self):
@@ -424,6 +554,79 @@ class CarrotMan:
         print(f"carrot_cmd_zmq error: {e}")
         time.sleep(1)
 
+  def recvall(self, sock, n):
+    """n바이트를 수신할 때까지 반복적으로 데이터를 받는 함수"""
+    data = bytearray()
+    while len(data) < n:
+      packet = sock.recv(n - len(data))
+      if not packet:
+        return None
+      data.extend(packet)
+    return data
+
+  def receive_double(self, sock):
+    double_data = self.recvall(sock, 8)  # Double은 8바이트
+    return struct.unpack('!d', double_data)[0]
+
+  def receive_float(self, sock):
+    float_data = self.recvall(sock, 4)  # Float은 4바이트
+    return struct.unpack('!f', float_data)[0]
+
+
+  def carrot_route(self):
+    host = '0.0.0.0'  # 혹은 다른 호스트 주소
+    port = 7709  # 포트 번호
+
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+      s.bind((host, port))
+      s.listen()
+
+      while True:
+        print("################# waiting conntection from CarrotMan route #####################")
+        conn, addr = s.accept()
+        with conn:
+          print(f"Connected by {addr}")
+          #self.clear_route()
+
+          # 전체 데이터 크기 수신
+          total_size_bytes = self.recvall(conn, 4)
+          if not total_size_bytes:
+            print("Connection closed or error occurred")
+            continue
+          try:
+            total_size = struct.unpack('!I', total_size_bytes)[0]
+            # 전체 데이터를 한 번에 수신
+            all_data = self.recvall(conn, total_size)
+            if all_data is None:
+                print("Connection closed or incomplete data received")
+                continue
+
+            self.navi_points = []
+            for i in range(0, len(all_data), 8):
+              x, y = struct.unpack('!ff', all_data[i:i+8])
+              self.navi_points.append((x, y))
+              #coord = Coordinate.from_mapbox_tuple((x, y))
+              #points.append(coord)
+            #coords = [c.as_dict() for c in points]
+         
+            print("Received points:", len(self.navi_points))
+            #print("Received points:", self.navi_points)
+
+            #msg = messaging.new_message('navRoute', valid=True)
+            #msg.navRoute.coordinates = coords
+            #self.pm.send('navRoute', msg)
+            #self.carrot_route_active = True
+            #self.params.put_bool_nonblocking("CarrotRouteActive", True)
+
+            #if len(coords):
+            #  dest = coords[-1]
+            #  dest['place_name'] = "External Navi"
+            #  self.params.put("NavDestination", json.dumps(dest))
+
+          except Exception as e:
+            print(e)
+
+
   def carrot_curve_speed_params(self):
     self.autoCurveSpeedLowerLimit = int(self.params.get("AutoCurveSpeedLowerLimit"))
     self.autoCurveSpeedFactor = self.params.get_int("AutoCurveSpeedFactor")*0.01
@@ -497,7 +700,7 @@ class CarrotMan:
     # Get the target velocity for the maximum curve
     turnSpeed = max(abs(adjusted_target_lat_a / max_curve)**0.5  * 3.6, self.autoCurveSpeedLowerLimit)
     return turnSpeed * curv_direction
-  
+
 import collections
 class CarrotServ:
   def __init__(self):
