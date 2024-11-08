@@ -63,6 +63,7 @@ def get_default_params():
     ("AutoNaviSpeedSafetyFactor", "105"),
     ("AutoNaviSpeedDecelRate", "120"),
     ("AutoNaviCountDownMode", "2"),
+    ("TurnSpeedControlMode", "1"),
     ("StoppingAccel", "0"),
     ("StopDistanceCarrot", "550"), 
     ("ComfortBrake", "240"), 

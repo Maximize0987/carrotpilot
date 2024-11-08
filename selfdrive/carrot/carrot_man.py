@@ -1,3 +1,4 @@
+from tkinter import CURRENT
 import numpy as np
 import time
 import threading
@@ -21,19 +22,34 @@ import cereal.messaging as messaging
 from cereal import log
 from common.numpy_fast import clip, interp
 from common.filter_simple import StreamingMovingAverage
+from shapely.geometry import LineString
 
 NetworkType = log.DeviceState.NetworkType
 
 ################ CarrotNavi
+## 국가법령정보센터: 도로설계기준
+V_CURVE_LOOKUP_BP = [0., 1./800., 1./670., 1./560., 1./440., 1./360., 1./265., 1./190., 1./135., 1./85., 1./55., 1./30., 1./15.]
+V_CRUVE_LOOKUP_VALS = [300, 150, 120, 110, 100, 90, 80, 70, 60, 50, 40, 30, 20]
+#V_CRUVE_LOOKUP_VALS = [300, 150, 120, 110, 100, 90, 80, 70, 60, 50, 45, 35, 30]
+
 # Haversine formula to calculate distance between two GPS coordinates
+haversine_cache = {}
 def haversine(lon1, lat1, lon2, lat2):
+    key = (lon1, lat1, lon2, lat2)
+    if key in haversine_cache:
+        return haversine_cache[key]
+
     R = 6371000  # Radius of Earth in meters
     phi1, phi2 = math.radians(lat1), math.radians(lat2)
     dphi = math.radians(lat2 - lat1)
     dlambda = math.radians(lon2 - lon1)
 
     a = math.sin(dphi / 2) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(dlambda / 2) ** 2
-    return 2 * R * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+    distance = 2 * R * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+
+    haversine_cache[key] = distance
+    return distance
+
 
 # Get the closest point on a segment between two coordinates
 def closest_point_on_segment(p1, p2, current_position):
@@ -55,42 +71,45 @@ def closest_point_on_segment(p1, p2, current_position):
 
     return (closest_x, closest_y)
 
+
 # Get path after a certain distance from the current position
-# Including interpolated point at the exact distance_m location
-def get_path_after_distance(coordinates, current_position, distance_m):
+def get_path_after_distance(start_index, coordinates, current_position, distance_m):
     total_distance = 0
     path_after_distance = []
-
-    # Find the closest point on the path to the current position using segment projection
     closest_index = -1
     closest_point = None
     min_distance = float('inf')
 
-    for i in range(len(coordinates) - 1):
+    # 가까운 점만 탐색하도록 수정
+    for i in range(start_index, len(coordinates) - 1):
         p1 = coordinates[i]
         p2 = coordinates[i + 1]
         candidate_point = closest_point_on_segment(p1, p2, current_position)
         distance = haversine(current_position[0], current_position[1], candidate_point[0], candidate_point[1])
+
         if distance < min_distance:
             min_distance = distance
             closest_point = candidate_point
-            closest_index = i + 1
+            closest_index = i
+        elif distance > min_distance and min_distance < 10:
+            break
 
+    start_index = closest_index
     # Start from the closest point and calculate the path after the specified distance
     if closest_index != -1:
-        # Always start with the closest point
-        total_distance = haversine(closest_point[0], closest_point[1], coordinates[closest_index][0], coordinates[closest_index][1])
         path_after_distance.append(closest_point)
-        path_after_distance.append(coordinates[closest_index])
 
-        # Traverse the path and add points until the total distance exceeds distance_m
-        for i in range(closest_index + 1, len(coordinates)):
-            coord1 = coordinates[i - 1]
-            coord2 = coordinates[i]
+        path_after_distance.append(coordinates[closest_index + 1])
+        total_distance = haversine(closest_point[0], closest_point[1], coordinates[closest_index + 1][0],
+                                   coordinates[closest_index + 1][1])
+
+        # Traverse the path forward from the next point
+        for i in range(closest_index + 1, len(coordinates) - 1):
+            coord1 = coordinates[i]
+            coord2 = coordinates[i + 1]
             segment_distance = haversine(coord1[0], coord1[1], coord2[0], coord2[1])
 
             if total_distance + segment_distance >= distance_m:
-                # Interpolate to find the exact point at distance_m
                 remaining_distance = distance_m - total_distance
                 ratio = remaining_distance / segment_distance
                 interpolated_lon = coord1[0] + ratio * (coord2[0] - coord1[0])
@@ -101,7 +120,13 @@ def get_path_after_distance(coordinates, current_position, distance_m):
             total_distance += segment_distance
             path_after_distance.append(coord2)
 
-    return path_after_distance
+    return path_after_distance, start_index
+
+
+def calculate_angle(point1, point2):
+    delta_lon = point2[0] - point1[0]
+    delta_lat = point2[1] - point1[1]
+    return math.degrees(math.atan2(delta_lat, delta_lon))
 
 # Convert GPS coordinates to relative x, y coordinates based on a reference point and heading
 def gps_to_relative_xy(gps_path, reference_point, heading_deg):
@@ -120,39 +145,38 @@ def gps_to_relative_xy(gps_path, reference_point, heading_deg):
         x_rot = x * math.cos(heading_rad) - y * math.sin(heading_rad)
         y_rot = x * math.sin(heading_rad) + y * math.cos(heading_rad)
 
-        relative_coordinates.append((x_rot, y_rot))
+        relative_coordinates.append((y_rot, x_rot))
 
     return relative_coordinates
 
+
 # Calculate curvature given three points using a faster vector-based method
+curvature_cache = {}
 def calculate_curvature(p1, p2, p3):
-    # Calculate vectors
+    key = (p1, p2, p3)
+    if key in curvature_cache:
+        return curvature_cache[key]
+
     v1 = (p2[0] - p1[0], p2[1] - p1[1])
     v2 = (p3[0] - p2[0], p3[1] - p2[1])
 
-    # Calculate cross product (magnitude of the z-component for 2D vectors)
     cross_product = v1[0] * v2[1] - v1[1] * v2[0]
+    len_v1 = math.sqrt(v1[0] ** 2 + v1[1] ** 2)
+    len_v2 = math.sqrt(v2[0] ** 2 + v2[1] ** 2)
 
-    # Calculate the lengths of the vectors
-    len_v1 = math.sqrt(v1[0]**2 + v1[1]**2)
-    len_v2 = math.sqrt(v2[0]**2 + v2[1]**2)
-
-    # Calculate the curvature as the sine of the angle between v1 and v2 divided by the product of their lengths
     if len_v1 * len_v2 == 0:
-        return 0
+        curvature = 0
+    else:
+        curvature = cross_product / (len_v1 * len_v2 * len_v1)
 
-    curvature = cross_product / (len_v1 * len_v2 * len_v1)
-
+    curvature_cache[key] = curvature
     return curvature
-
-################ CarrotNavi End..  
-
 
 class CarrotMan:
   def __init__(self):
     self.params = Params()
     self.params_memory = Params("/dev/shm/params")
-    self.sm = messaging.SubMaster(['deviceState', 'carState', 'controlsState', 'longitudinalPlan', 'modelV2', 'selfdriveState'])
+    self.sm = messaging.SubMaster(['deviceState', 'carState', 'controlsState', 'longitudinalPlan', 'modelV2', 'selfdriveState', 'carControl'])
     self.pm = messaging.PubMaster(['carrotMan'])
 
     self.carrot_serv = CarrotServ()
@@ -186,7 +210,7 @@ class CarrotMan:
     threading.Thread(target=self.broadcast_version_info).start()
 
     self.navi_points = []
-
+    self.navi_points_start_index = 0
 
   def get_broadcast_address(self):
     try:
@@ -215,7 +239,11 @@ class CarrotMan:
         remote_addr = self.remote_addr
         remote_ip = remote_addr[0] if remote_addr is not None else ""
         vturn_speed = self.carrot_curve_speed(self.sm)
-        self.carrot_serv.update_navi(remote_ip, self.sm, self.pm, vturn_speed)
+        coords, distances, route_speeds, speed_distances = self.carrot_navi_route()
+        
+        #print("coords=", coords)
+        #print("curvatures=", curvatures)
+        self.carrot_serv.update_navi(remote_ip, self.sm, self.pm, vturn_speed, coords, distances, route_speeds, speed_distances)
 
         if frame % 20 == 0 or remote_addr is not None:
           try:
@@ -238,6 +266,7 @@ class CarrotMan:
 
             if remote_addr is None:
               print(f"Broadcasting: {self.broadcast_ip}:{msg}")
+              self.navi_points = []
             
           except Exception as e:
             if self.connection:
@@ -253,12 +282,61 @@ class CarrotMan:
         traceback.print_exc()
         time.sleep(1)
 
+  def carrot_navi_route(self):
+    if len(self.navi_points) == 0:
+      haversine_cache.clear()
+      curvature_cache.clear()
+      return [],[],[],[]
+
+    current_position = (self.carrot_serv.vpPosPointLon, self.carrot_serv.vpPosPointLat)
+    heading_deg = self.carrot_serv.bearing
+
+    path, self.navi_points_start_index = get_path_after_distance(self.navi_points_start_index, self.navi_points, current_position, 300)
+    relative_coords = []
+    if path:
+        relative_coords = gps_to_relative_xy(path, current_position, heading_deg)
+        # Resample relative_coords at 5m intervals using LineString
+        line = LineString(relative_coords)
+        resampled_points = []
+        resampled_distances = []
+        current_distance = 0        
+        while current_distance <= line.length:
+            point = line.interpolate(current_distance)
+            resampled_points.append((point.x, point.y))
+            resampled_distances.append(current_distance)
+            current_distance += 10
+
+        curvatures = []
+        distances = []
+        speeds = []
+        distance = 10.0
+        if len(resampled_points) >= 3:
+            for i in range(len(resampled_points) - 2):
+                distance += 10.0
+                p1 = resampled_points[i]
+                p2 = resampled_points[i + 1]
+                p3 = resampled_points[i + 2]
+                curvature = calculate_curvature(p1, p2, p3)
+                curvatures.append(curvature)
+                if curvature > 0.001:
+                    speed = interp(abs(curvature), V_CURVE_LOOKUP_BP, V_CRUVE_LOOKUP_VALS)
+                    speeds.append(speed)
+                    distances.append(distance)
+    else:
+        resampled_points = []
+        curvatures = []
+        speeds = []
+        distances = []
+      
+    return resampled_points, resampled_distances, speeds, distances
+
+
   def make_send_message(self):
     msg = {}
-    msg['Carrot'] = self.params.get("Version").decode('utf-8')
+    msg['Carrot2'] = self.params.get("Version").decode('utf-8')
     isOnroad = self.params.get_bool("IsOnroad")
     msg['IsOnroad'] = isOnroad
-    msg['CarrotRouteActive'] = False #self.params.get_bool("CarrotRouteActive")
+    msg['CarrotRouteActive'] = True if len(self.navi_points) > 0 else False
     msg['ip'] = self.ip_address
     msg['port'] = self.carrot_man_port
     self.controls_active = False
@@ -349,72 +427,6 @@ class CarrotMan:
         self.remote_addr = None
         print(f"Network error, retrying...: {e}")
         time.sleep(2)
-
-  def carrot_man_thread_tcipip(self):
-    while True:
-      try:
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-          sock.settimeout(10)  # 소켓 타임아웃 설정 (10초)
-          sock.bind(('0.0.0.0', self.carrot_man_port))
-          sock.listen(5)
-          print("#########carrot_man_thread: thread started...")
-
-          while True:
-            self.connection = None
-            self.remote_addr = None
-            try:
-              self.connection, self.remote_addr = sock.accept()
-              print(self.remote_addr)
-
-              self.connection.settimeout(10)
-            
-              while self.remote_addr is not None:
-                try:
-                  length_data = self.connection.recv(4)
-                  if not length_data:
-                    raise ConnectionError("Connection closed")
-                  try:
-                    data_length = int(length_data.decode('utf-8'))
-                  except ValueError:
-                    raise ConnectionError("Received invalid data length")
-
-                  data = self.receive_fixed_length_data(self.connection, data_length)
-
-                  try:
-                    msg = self.make_send_message()
-                    length = len(msg)
-                    message = f"{length:04d}" + msg
-                    self.connection.send(message.encode('utf-8'))
-                  except Exception as e:
-                    print(f"carrot_man_thread: send error...: {e}")                    
-
-                  try:
-                    json_obj = json.loads(data.decode())
-                    self.carrot_serv.update(json_obj)
-                  except Exception as e:
-                    print(f"carrot_man_thread: json error...: {e}")
-                    print(data)
-
-                except socket.timeout:
-                  print("Waiting for data (timeout)...")
-                  time.sleep(1)
-                  break
-
-                except Exception as e:
-                  print(f"carrot_man_thread: error...: {e}")
-                  break
-
-            except Exception as e:
-              print(f"carrot_man_thread: accept error...: {e}")
-          
-            finally:
-              if self.connection:
-                self.connection.close()              
-
-            time.sleep(1)
-      except Exception as e:
-        print(f"Network error, retrying...: {e}")
-        time.sleep(5)  # 네트워크 오류 발생 시 5초 후 재시도
       
   def make_tmux_data(self):
     try:
@@ -608,7 +620,7 @@ class CarrotMan:
               #coord = Coordinate.from_mapbox_tuple((x, y))
               #points.append(coord)
             #coords = [c.as_dict() for c in points]
-         
+            self.navi_points_start_index = 0
             print("Received points:", len(self.navi_points))
             #print("Received points:", self.navi_points)
 
@@ -635,12 +647,6 @@ class CarrotMan:
    
   def carrot_curve_speed(self, sm):
     self.carrot_curve_speed_params()
-
-    ## 국가법령정보센터: 도로설계기준
-    V_CURVE_LOOKUP_BP = [0., 1./800., 1./670., 1./560., 1./440., 1./360., 1./265., 1./190., 1./135., 1./85., 1./55., 1./30., 1./15.]
-    #V_CRUVE_LOOKUP_VALS = [300, 150, 120, 110, 100, 90, 80, 70, 60, 50, 40, 30, 20]
-    V_CRUVE_LOOKUP_VALS = [300, 150, 120, 110, 100, 90, 80, 70, 60, 50, 45, 35, 30]
-
     if not sm.alive['carState'] and not sm.alive['modelV2']:
         return 250
     #print(len(sm['modelV2'].orientationRate.z))
@@ -757,6 +763,7 @@ class CarrotServ:
     self.last_update_gps_time = 0
     self.last_calculate_gps_time = 0
     self.bearing_offset = 0.0
+    self.bearing = 0.0
     
     self.totalDistance = 0
     self.xSpdLimit = 0
@@ -790,7 +797,8 @@ class CarrotServ:
     self.source_last = "none"
 
     self.debugText = ""
-
+    
+    self.update_params()
 
   def update_params(self):
     self.autoNaviSpeedBumpSpeed = float(self.params.get_int("AutoNaviSpeedBumpSpeed"))
@@ -799,6 +807,7 @@ class CarrotServ:
     self.autoNaviSpeedSafetyFactor = float(self.params.get_int("AutoNaviSpeedSafetyFactor")) * 0.01
     self.autoNaviSpeedDecelRate = float(self.params.get_int("AutoNaviSpeedDecelRate")) * 0.01
     self.autoNaviCountDownMode = self.params.get_int("AutoNaviCountDownMode")
+    self.turnSpeedControlMode= self.params.get_int("TurnSpeedControlMode")
 
     self.autoTurnControlSpeedTurn = self.params.get_int("AutoTurnControlSpeedTurn")
     #self.autoTurnMapChange = self.params.get_int("AutoTurnMapChange")
@@ -1094,51 +1103,41 @@ class CarrotServ:
       self.xSpdLimit = 0
       self.xSpdType = -1
       self.xSpdDist = 0
-
+    
   def _update_gps(self, v_ego, sm):
-    if not sm.updated['carState'] or not sm.updated['liveLocationKalman']:
-      return 0.0
+    if not sm.updated['carState'] or not sm.updated['carControl']:
+      return self.nPosAngle
     CS = sm['carState']
-    location = sm['liveLocationKalman']
-    bearing = math.degrees(location.calibratedOrientationNED.value[2])
-    if (location.status == log.LiveLocationKalman.Status.valid) and location.positionGeodetic.valid and location.gpsOK:            
-      location_valid = True
-      self.bearing_offset = 0.0
+    CC = sm['carControl']
+    if len(CC.orientationNED) == 3:
+      bearing = math.degrees(CC.orientationNED[2])
     else:
-      location_valid = False
+      bearing = 0.0
+      return self.nPosAngle
+
+    if abs(CS.steeringAngleDeg) < 2.0:
+        self.diff_angle_count += 1
+    else:
+        self.diff_angle_count = 0
+
+    if self.diff_angle_count > 5:
+      diff_angle = (self.nPosAngle - bearing) % 360
+      if diff_angle > 180:
+        diff_angle -= 360
+      self.bearing_offset = self.bearing_offset * 0.9 + diff_angle * 0.1
+    
+    bearing_calculated = (bearing + self.bearing_offset) % 360
 
     now = time.monotonic()
-    if self.active_sdi_count > self.active_sdi_count_max - 3:
-      if not location_valid and CS is not None:
-        diff_angle = self.nPosAngle - bearing;
-        while diff_angle < 0.0:
-          diff_angle += 360
-        diff_angle = (diff_angle + 180) % 360 - 180;
-        if abs(diff_angle) > 20 and v_ego > 1.0 and abs(CS.steeringAngleDeg) < 2.0:
-          self.diff_angle_count += 1
-        else:
-          self.diff_angle_count = 0
-        print("{:.1f} bearing_diff[{}] = {:.1f} = {:.1f} - {:.1f}, v={:.1f},st={:.1f}".format(self.bearing_offset, self.diff_angle_count, diff_angle, self.nPosAngle, bearing, CS.vEgo*3.6, CS.steeringAngleDeg))
-        if self.diff_angle_count > 2:
-          self.bearing_offset = self.nPosAngle - bearing
-          print("bearing_offset = {:.1f} = {:.1f} - {:.1f}".format(self.bearing_offset, self.nPosAngle, bearing))
-      #n초 통신 지연시간이 있다고 가정하고 좀더 진행한것으로 처리함.
-      dt = 0 #(unix_now - timeStamp / 1000.) if timeStamp > 0 else 0.1
-      dt += 0.2  #가상으로 0.5초만큼 더 진행한것으로 
-      self.vpPosPointLat, self.vpPosPointLon = self.estimate_position(float(self.vpPosPointLat), float(self.vpPosPointLon), v_ego, bearing + self.bearing_offset, dt)
-      self.last_update_gps_time = now
-      self.last_calculate_gps_time = now
-    elif now - self.last_update_gps_time < 3.0:# and CS is not None:
-      dt = now - self.last_calculate_gps_time
-      self.last_calculate_gps_time = now
-      self.vpPosPointLat, self.vpPosPointLon = self.estimate_position(float(self.vpPosPointLat), float(self.vpPosPointLon), v_ego, bearing + self.bearing_offset, dt)
-    #roadLimitSpeed.xPosSpeed = float(nPosSpeed)
-    #roadLimitSpeed.xPosAngle = float(bearing + self.bearing_offset)
-    #roadLimitSpeed.xPosLat = float(vpPosPointLat)
-    #roadLimitSpeed.xPosLon = float(vpPosPointLon)
+    dt = now - self.last_calculate_gps_time
+    self.last_calculate_gps_time = now
+    self.vpPosPointLat, self.vpPosPointLon = self.estimate_position(float(self.vpPosPointLat), float(self.vpPosPointLon), v_ego, bearing_calculated, dt)
 
-    return float(bearing + self.bearing_offset)
-    
+    self.debugText = " {:.1f},{:.1f}={:.1f}+{:.1f}".format(self.nPosAngle, bearing_calculated, bearing, self.bearing_offset)
+    #print("nPosAngle = {:.1f},{:.1f} = {:.1f}+{:.1f}".format(self.nPosAngle, bearing_calculated, bearing, self.bearing_offset))
+    return float(bearing_calculated)
+
+  
   def estimate_position(self, lat, lon, speed, angle, dt):
     R = 6371000
     angle_rad = math.radians(angle)
@@ -1208,7 +1207,7 @@ class CarrotServ:
 
     return atc_desired, atc_type, atc_speed, atc_dist
 
-  def update_navi(self, remote_ip, sm, pm, vturn_speed):
+  def update_navi(self, remote_ip, sm, pm, vturn_speed, coords, distances, route_speeds, speed_distances):
 
     self.update_params()
     if sm.alive['carState'] and sm.alive['selfdriveState']:
@@ -1223,7 +1222,8 @@ class CarrotServ:
       delta_dist = 0
       CS = None
       
-    bearing = self.nPosAngle #self._update_gps(v_ego, sm)
+    #self.bearing = self.nPosAngle #self._update_gps(v_ego, sm)
+    self.bearing = self._update_gps(v_ego, sm)
 
     self.xSpdDist = max(self.xSpdDist - delta_dist, 0)
     self.xDistToTurn = max(self.xDistToTurn - delta_dist, 0)
@@ -1271,13 +1271,15 @@ class CarrotServ:
     atc_desired, self.atcType, self.atcSpeed, self.atcDist = self.update_auto_turn(v_ego*3.6, sm, self.xTurnInfo, self.xDistToTurn, True)
     atc_desired_next, _, _, _ = self.update_auto_turn(v_ego*3.6, sm, self.xTurnInfoNext, self.xDistToTurnNext, False)
 
-    if self.nSdiType  >= 0: # or self.active_carrot > 0:      
+    if self.nSdiType  >= 0: # or self.active_carrot > 0:
+      pass
       #self.debugText = f"Atc:{atc_desired:.1f},{self.xTurnInfo}:{self.xDistToTurn:.1f}, I({self.nTBTNextRoadWidth},{self.roadcate}) Atc2:{atc_desired_next:.1f},{self.xTurnInfoNext},{self.xDistToTurnNext:.1f}"
-      self.debugText = "" #f" {self.nSdiType}/{self.nSdiSpeedLimit}/{self.nSdiDist},BLOCK:{self.nSdiBlockType}/{self.nSdiBlockSpeed}/{self.nSdiBlockDist}, PLUS:{self.nSdiPlusType}/{self.nSdiPlusSpeedLimit}/{self.nSdiPlusDist}"
+      #self.debugText = "" #f" {self.nSdiType}/{self.nSdiSpeedLimit}/{self.nSdiDist},BLOCK:{self.nSdiBlockType}/{self.nSdiBlockSpeed}/{self.nSdiBlockDist}, PLUS:{self.nSdiPlusType}/{self.nSdiPlusSpeedLimit}/{self.nSdiPlusDist}"
     #elif self.nGoPosDist > 0 and self.active_carrot > 1:
     #  self.debugText = " 목적지:{:.1f}km/{:.1f}분 남음".format(self.nGoPosDist/1000., self.nGoPosTime / 60)
     else:
-      self.debugText = ""
+      #self.debugText = ""
+      pass
       
     if self.autoTurnControl not in [2, 3]:    # auto turn speed control
       atc_desired = atc_desired_next = 250
@@ -1285,12 +1287,21 @@ class CarrotServ:
     if self.autoTurnControl not in [1,2]:    # auto turn control
       self.atcType = "none"
 
+
     speed_n_sources = [
       (atc_desired, "atc"),
       (atc_desired_next, "atc2"),
       (sdi_speed, "hda" if hda_active else "bump" if self.xSpdType == 22 else "section" if self.xSpdType == 4 else "cam"),
-      (abs(vturn_speed), "vturn"),
     ]
+    if self.turnSpeedControlMode in [1,2]:
+      speed_n_sources.append((abs(vturn_speed), "vturn"))
+
+    if self.turnSpeedControlMode in [2,3]:
+      #if len(route_speeds) > 0:
+      #  print(" ".join(str(round(speed, 1)) for speed in route_speeds))
+      for dist, speed in zip(speed_distances, route_speeds):
+        speed_n_sources.append((self.calculate_current_speed(dist, speed, 0, self.autoNaviSpeedDecelRate), "route"))
+
     desired_speed, source = min(speed_n_sources, key=lambda x: x[0])
 
     if CS is not None:
@@ -1347,13 +1358,17 @@ class CarrotServ:
     msg.carrotMan.trafficState = self.traffic_state
 
     msg.carrotMan.xPosSpeed = float(self.nPosSpeed)
-    msg.carrotMan.xPosAngle = float(bearing)
+    msg.carrotMan.xPosAngle = float(self.bearing)
     msg.carrotMan.xPosLat = float(self.vpPosPointLat)
     msg.carrotMan.xPosLon = float(self.vpPosPointLon)
 
     msg.carrotMan.nGoPosDist = self.nGoPosDist
     msg.carrotMan.nGoPosTime = self.nGoPosTime
     msg.carrotMan.szSdiDescr = self._get_sdi_descr(self.nSdiType)
+
+    #coords_str = ";".join([f"{x},{y}" for x, y in coords])
+    coords_str = ";".join([f"{x:.2f},{y:.2f},{d:.2f}" for (x, y), d in zip(coords, distances)])
+    msg.carrotMan.naviPaths = coords_str
 
     pm.send('carrotMan', msg)
     
