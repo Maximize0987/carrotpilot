@@ -111,6 +111,7 @@ def get_default_params():
     ("MaxTimeOffroadMin", "60"),
     ("DisableDM", "0"),
     ("HotspotOnBoot", "0"),
+    ("CustomSR", "0"),
   ]
   return default_params
 
