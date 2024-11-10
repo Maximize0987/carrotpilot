@@ -428,7 +428,7 @@ def create_adrv_messages(CP, packer, CAN, frame, CC, CS, hud_control):
 
           #LANE_ASSIST_L,R: 0:OFF, 1: GREY, 2: GREEN, 4: WHITE
           values["LANE_ASSIST_L"] = 2
-          values["LANE_ASSIST_L"] = 2
+          values["LANE_ASSIST_R"] = 2
           
           ret.append(packer.make_can_msg("ADRV_0x161", CAN.ECAN, values))
         else:
