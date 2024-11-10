@@ -416,6 +416,8 @@ def create_adrv_messages(CP, packer, CAN, frame, CC, CS, hud_control):
           #values["CRUISE_INFO10_SET1"] = 1
           #values["CRUISE_INFO11_SET1"] = 1
 
+          values["AUTO_LANE_CHANGE_MESSAGE_SET6"] = 0 # 1: 핸들잡아, 2: 빨리잡아, 6: 자동차선변경준비.
+
           values["CRUISE_INFO7_HWAY_SET2_ELSE_0"] = 0
           values["CRUISE_INFO9_HWAY_SET2_ELSE_0"] = 0
           #values["NEW_SIGNAL_HWAY_SET1_ELSE_0"] = 1
