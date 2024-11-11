@@ -106,7 +106,7 @@ def create_steering_messages_camera_scc(packer, CP, CAN, enabled, lat_active, ap
   if True:
     values = {}
     values["LKA_MODE"] = 2
-    values["LKA_ICON"] = 2 if enabled else 1
+    values["LKA_ICON"] = 2 if lat_active else 1
     values["TORQUE_REQUEST"] = apply_steer
     values["STEER_REQ"] = 1 if lat_active else 0
     values["VALUE64"] = 0  # STEER_MODE, NEW_SIGNAL_2
