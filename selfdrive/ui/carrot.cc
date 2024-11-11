@@ -2120,19 +2120,19 @@ public:
             dy = by - 200;
             mode_color = COLOR_GREEN_ALPHA(190);
             ui_fill_rect(s->vg, { dx - 65, dy - 38, 130, 90 }, (cpuTemp>80 && blink_timer<=8)?COLOR_RED : mode_color, 15, 2);
-            ui_draw_text(s, dx, dy, "CPU", 25, COLOR_WHITE, BOLD);
+            ui_draw_text(s, dx, dy-5, "CPU", 25, COLOR_WHITE, BOLD);
             sprintf(str, "%.0f\u00B0C", cpuTemp);
             ui_draw_text(s, dx, dy + 40, str, 40, COLOR_WHITE, BOLD);
 
             dx += 150;
             ui_fill_rect(s->vg, { dx - 65, dy - 38, 130, 90 }, (memoryUsage > 85 && blink_timer <= 8) ? COLOR_RED : mode_color, 15, 2);
-            ui_draw_text(s, dx, dy, "MEM", 25, COLOR_WHITE, BOLD);
+            ui_draw_text(s, dx, dy-5, "MEM", 25, COLOR_WHITE, BOLD);
             sprintf(str, "%d%%", memoryUsage);
             ui_draw_text(s, dx, dy + 40, str, 40, COLOR_WHITE, BOLD);
 
             dx += 150;
             ui_fill_rect(s->vg, { dx - 65, dy - 38, 130, 90 }, mode_color, 15, 2);
-            ui_draw_text(s, dx, dy, "DISK", 25, COLOR_WHITE, BOLD);
+            ui_draw_text(s, dx, dy-5, "DISK", 25, COLOR_WHITE, BOLD);
             sprintf(str, "%.0f%%", 100 - freeSpace);
             ui_draw_text(s, dx, dy + 40, str, 40, COLOR_WHITE, BOLD);
         }
