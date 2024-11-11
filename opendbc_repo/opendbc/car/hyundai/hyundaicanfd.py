@@ -291,7 +291,7 @@ def create_acc_control_scc2(packer, CAN, enabled, accel_last, accel, stopping, g
   #values["SET_ME_3"] = 0x3  # objRelsped와 충돌
   values["SET_ME_TMP_64"] = 0x64
 
-  #values["NEW_SIGNAL_3"] = 0  # 1이되면 차선이탈방지 알람이 뜬다고...  => 앞에 차가 있으면, 1또는 2가 됨. 전방두부?
+  values["NEW_SIGNAL_3"] = 1 if hud_control.leadVisible else 0 #0  # 1이되면 차선이탈방지 알람이 뜬다고...  => 앞에 차가 있으면, 1또는 2가 됨. 전방두부?
   
   #values["NEW_SIGNAL_4"] = 2
 
