@@ -323,7 +323,7 @@ class CarrotMan:
                 p3 = resampled_points[i + 2]
                 curvature = calculate_curvature(p1, p2, p3)
                 curvatures.append(curvature)
-                if curvature > 0.001:
+                if abs(curvature) > 0.001:
                     speed = interp(abs(curvature), V_CURVE_LOOKUP_BP, V_CRUVE_LOOKUP_VALS)
                     speeds.append(speed)
                     distances.append(distance)
