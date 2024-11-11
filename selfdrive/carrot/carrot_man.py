@@ -315,12 +315,12 @@ class CarrotMan:
         distances = []
         speeds = []
         distance = 10.0
-        if len(resampled_points) >= 3:
-            for i in range(len(resampled_points) - 2):
+        if len(resampled_points) >= 7:
+            for i in range(len(resampled_points) - 6):
                 distance += 10.0
                 p1 = resampled_points[i]
-                p2 = resampled_points[i + 1]
-                p3 = resampled_points[i + 2]
+                p2 = resampled_points[i + 3]
+                p3 = resampled_points[i + 6]
                 curvature = calculate_curvature(p1, p2, p3)
                 curvatures.append(curvature)
                 if abs(curvature) > 0.001:
