@@ -22,7 +22,11 @@ import cereal.messaging as messaging
 from cereal import log
 from common.numpy_fast import clip, interp
 from common.filter_simple import StreamingMovingAverage
-from shapely.geometry import LineString
+try:
+  from shapely.geometry import LineString
+  SHAPELY_AVAILABLE = True
+except ImportError:
+  SHAPELY_AVAILABLE = False
 
 NetworkType = log.DeviceState.NetworkType
 
@@ -283,7 +287,8 @@ class CarrotMan:
         time.sleep(1)
 
   def carrot_navi_route(self):
-    if len(self.navi_points) == 0:
+   
+    if len(self.navi_points) == 0 or not SHAPELY_AVAILABLE:
       haversine_cache.clear()
       curvature_cache.clear()
       return [],[],[],[]
