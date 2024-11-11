@@ -969,7 +969,7 @@ protected:
         ui_fill_rect(s->vg, { tbt_x, tbt_y - 60, 790, 240 + 60 }, COLOR_BLACK_ALPHA(120), 30, 2, &stroke_color);
         if (szPosRoadName.length() > 0) {
             nvgTextAlign(s->vg, NVG_ALIGN_LEFT | NVG_ALIGN_BOTTOM);
-            ui_draw_text(s, tbt_x + 90, tbt_y - 5, szPosRoadName.toStdString().c_str(), 30, COLOR_WHITE, BOLD);
+            ui_draw_text(s, tbt_x + 90, tbt_y - 15, szPosRoadName.toStdString().c_str(), 30, COLOR_WHITE, BOLD);
             //ui_draw_text(s, tbt_x + 190, tbt_y - 5, szPosRoadName.toStdString().c_str(), 40, COLOR_WHITE, BOLD);
         }
 
