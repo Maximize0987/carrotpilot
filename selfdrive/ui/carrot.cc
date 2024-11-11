@@ -1840,6 +1840,8 @@ public:
             QString naviPaths = QString::fromStdString(carrot_man.getNaviPaths());
             QStringList pairs = naviPaths.split(";");
             nav_path_vertex_count = 0;
+            int max_z = model_position.getZ().size();
+            float z_offset = 0.0;
             foreach(const QString & pair, pairs) {
                 QStringList xy = pair.split(",");  // ","로 x와 y 구분                
                 if (xy.size() == 3) {
@@ -1849,7 +1851,8 @@ public:
                     float d = xy[2].toFloat();                    
                     int idx = get_path_length_idx(model_position, d);
 
-                    _model->mapToScreen((x<3.0) ? 5.0 : x, y, model_position.getZ()[idx]+1.22, &nav_path_vertex[nav_path_vertex_count++]);
+                    if (idx >= max_z) z_offset -= 0.05;
+                    _model->mapToScreen((x<3.0) ? 5.0 : x, y, model_position.getZ()[idx]+1.22 + z_offset, &nav_path_vertex[nav_path_vertex_count++]);
                 }
             }
             auto meta = sm["modelV2"].getModelV2().getMeta();
