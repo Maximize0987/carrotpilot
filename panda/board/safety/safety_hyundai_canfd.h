@@ -448,8 +448,8 @@ static int hyundai_canfd_fwd_hook(int bus_num, int addr) {
     }
   }
   extern uint8_t to_push_data_len_code;
+  int i;
   if (bus_num == 1) {
-      int i;
       for (i = 0; i < addr_list_count1 && i < 127; i++) {
           if (addr_list1[i] == addr) {
               addr_list_len1[i] = to_push_data_len_code;
@@ -467,7 +467,6 @@ static int hyundai_canfd_fwd_hook(int bus_num, int addr) {
       }
   }
   if (bus_num == 2) {
-      int i;
       if (i == addr_list_count2 && i != 127) {
           addr_list2[addr_list_count2] = addr;
           addr_list_count2++;
