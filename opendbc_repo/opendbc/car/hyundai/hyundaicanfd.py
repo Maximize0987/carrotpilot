@@ -461,6 +461,13 @@ def create_adrv_messages(CP, packer, CAN, frame, CC, CS, hud_control):
         values["SIGNAL240"] = 0
         values["SIGNAL246"] = 0
         ret.append(packer.make_can_msg("CORNER_RADAR_HIGHWAY", CAN.ECAN, values))
+
+    if frame % 20 == 0:
+      if CS.hda_info_4a3 is not None:
+        values = CS.hda_info_4a3
+        values["SIGNAL_4"] = 10   # 0, 5(고속도로진입), 10(고속도로), 7,5(국도에서 간혹), 0,10(카니발)      , 5(고속도로진입,EV6), 11(고속도로,EV6)
+        values["SIGNAL_0"] = 1   # 0, 2(고속도로진입), 1(고속도로),                      5(카니발은 항상)  , 2(고속도로진입,EV6), 1(고속도로,EV6)
+        ret.append(packer.make_can_msg("HDA_INFO_4A3", CAN.CAM, values))
     return ret
   else:
     values = {}

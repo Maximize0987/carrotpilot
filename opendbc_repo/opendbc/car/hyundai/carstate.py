@@ -61,7 +61,8 @@ class CarState(CarStateBase):
     self.adrv_info_1ea = None
     self.adrv_info_160 = None
     self.adrv_info_162 = None
-
+    self.hda_info_4a3 = None
+    
     self.cruise_buttons_msg = None
     self.hda2_lfa_block_msg = None
 
@@ -381,6 +382,9 @@ class CarState(CarStateBase):
       if "ADRV_0x160" in cp_cam.vl:
         self.adrv_info_160 = copy.copy(cp_cam.vl.get("ADRV_0x160", {}))
 
+      if "HDA_INFO_4A3" in cp.vl:
+        self.hda_info_4a3 = copy.copy(cp.vl.get("HDA_INFO_4A3", {}))
+
     # Manual Speed Limit Assist is a feature that replaces non-adaptive cruise control on EV CAN FD platforms.
     # It limits the vehicle speed, overridable by pressing the accelerator past a certain point.
     # The car will brake, but does not respect positive acceleration commands in this mode
@@ -585,6 +589,10 @@ class CarState(CarStateBase):
         ("SCC_CONTROL", 50),
       ]
 
+    if CP.flags & HyundaiFlags.CANFD_HDA2 and CP.flags & HyundaiFlags.CAMERA_SCC:
+      messages += [
+        ("HDA_INFO_4A3", 5),
+      ]
     #if CP.flags & HyundaiFlags.CANFD_HDA2 and CP.extFlags & HyundaiExtFlags.NAVI_CLUSTER.value and not (CP.extFlags & HyundaiExtFlags.SCC_BUS2.value):
     #  messages.append(("CLUSTER_SPEED_LIMIT", 10))
 
