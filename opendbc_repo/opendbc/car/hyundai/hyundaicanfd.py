@@ -287,7 +287,7 @@ def create_acc_control_scc2(packer, CAN, enabled, accel_last, accel, stopping, g
   #values["ACC_ObjDist"] = 1
   #values["ObjValid"] = 0
   #values["OBJ_STATUS"] =  2
-  values["SET_ME_2"] = 0x4
+  values["SET_ME_2"] = 5 #0x4
   #values["SET_ME_3"] = 0x3  # objRelsped와 충돌
   values["SET_ME_TMP_64"] = 0x64
 
