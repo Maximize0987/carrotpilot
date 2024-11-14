@@ -481,7 +481,7 @@ def create_adrv_messages(CP, packer, CAN, frame, CC, CS, hud_control):
         values = CS.new_msg_4b4
         values["NEW_SIGNAL_4"] = 146
         values["NEW_SIGNAL_5"] = 72
-        #values["NEW_SIGNAL_6"] = 44
+        values["NEW_SIGNAL_6"] = 44
         ret.append(packer.make_can_msg("NEW_MSG_4B4", CAN.CAM, values))
     return ret
   else:
